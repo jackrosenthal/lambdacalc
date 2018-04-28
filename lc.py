@@ -190,7 +190,8 @@ def parse(tokens):
             n, m = (stack.pop() for _ in range(2))
             stack.append(Application(m, n))
         elif (match(stack, (CtrlTok.Lambda, Variable, CtrlTok.Dot, Term))
-                and not isinstance(lookahead, Variable)):
+              and (lookahead is None
+                   or isinstance(lookahead, CtrlTok.RParen))):
             # Reduce by Abstraction -> λ Variable . Term
             t, _, x, _ = (stack.pop() for _ in range(4))
             stack.append(Abstraction(x, t))
