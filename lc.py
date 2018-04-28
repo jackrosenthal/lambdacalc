@@ -256,7 +256,7 @@ def church_to_int(t):
     t = t.term
     if isinstance(t, Variable) and t.id == x.id:
         return 0
-    if isinstance(t, Abstraction):
+    if not isinstance(t, Application):
         return
     if not isinstance(t.n, Variable) or t.n.id != x.id:
         return
@@ -382,7 +382,7 @@ def repl():
                         print("Input is not fully bound")
                         continue
                     show_reduction(term, shorthands, ast=args.show_ast)
-            except SyntaxError as e:
+            except Exception as e:
                 print("{}: {}".format(e.__class__.__name__, e))
 
 
