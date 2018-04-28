@@ -236,12 +236,9 @@ def parse(tokens, shorthands={}):
 
 
 def church_numeral(n):
-    x = Variable('x')
-    if n == 0:
-        return Abstraction(Variable('f'), Abstraction(Variable('x'), x))
-    a = Application(Variable('f'), x)
-    for _ in range(n - 1):
-        a.m = Application(a.m, Variable('f'))
+    a = Variable('x')
+    for _ in range(n):
+        a = Application(Variable('f'), a)
     return Abstraction(Variable('f'), Abstraction(Variable('x'), a))
 
 
@@ -253,23 +250,16 @@ def church_to_int(t):
     if not isinstance(t, Abstraction):
         return
     x = t.var
+    i = 0
     t = t.term
-    if isinstance(t, Variable) and t.id == x.id:
-        return 0
-    if not isinstance(t, Application):
-        return
-    if not isinstance(t.n, Variable) or t.n.id != x.id:
-        return
-    t = t.m
-    i = 1
     while isinstance(t, Application):
-        if not isinstance(t.n, Variable):
+        if not isinstance(t.m, Variable):
             return
-        if t.n.id != f.id:
+        if t.m.id != f.id:
             return
         i += 1
-        t = t.m
-    if not isinstance(t, Variable) or t.id != f.id:
+        t = t.n
+    if not isinstance(t, Variable) or t.id != x.id:
         return
     return i
 
