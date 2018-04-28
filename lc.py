@@ -1,5 +1,6 @@
 import re
 import readline
+import argparse
 
 
 class CtrlTok:
@@ -111,7 +112,7 @@ class Application(Term):
         nr = self.n.lrepr()
         if isinstance(self.m, Abstraction):
             mr = '({})'.format(mr)
-        if isinstance(self.n, Abstraction):
+        if not isinstance(self.n, Variable):
             nr = '({})'.format(nr)
         return '{}{}'.format(mr, nr)
 
@@ -124,11 +125,6 @@ class Application(Term):
             return False
         return (self.m.alpha_eq(other.m, renames)
                 and self.n.alpha_eq(other.n, renames))
-
-    def beta(self):
-        if isinstance(self.m, Application):
-            return Application(self.m.beta(), self.n)
-        return self.m.term.apply(self.m.var.id, self.n)
 
     def apply(self, vid, t):
         return Application(self.m.apply(vid, t), self.n.apply(vid, t))
@@ -240,9 +236,12 @@ def parse(tokens, shorthands={}):
 
 
 def church_numeral(n):
-    a = Variable('x')
-    for _ in range(n):
-        a = Application(Variable('f'), a)
+    x = Variable('x')
+    if n == 0:
+        return Abstraction(Variable('f'), Abstraction(Variable('x'), x))
+    a = Application(Variable('f'), x)
+    for _ in range(n - 1):
+        a.m = Application(a.m, Variable('f'))
     return Abstraction(Variable('f'), Abstraction(Variable('x'), a))
 
 
@@ -254,32 +253,62 @@ def church_to_int(t):
     if not isinstance(t, Abstraction):
         return
     x = t.var
-    i = 0
     t = t.term
+    if isinstance(t, Variable) and t.id == x.id:
+        return 0
+    if isinstance(t, Abstraction):
+        return
+    if not isinstance(t.n, Variable) or t.n.id != x.id:
+        return
+    t = t.m
+    i = 1
     while isinstance(t, Application):
-        if not isinstance(t.m, Variable):
+        if not isinstance(t.n, Variable):
             return
-        if t.m.id != f.id:
+        if t.n.id != f.id:
             return
         i += 1
-        t = t.n
-    if not isinstance(t, Variable) or t.id != x.id:
+        t = t.m
+    if not isinstance(t, Variable) or t.id != f.id:
         return
     return i
 
 
-def show_reduction(term, shorthands={}):
-    print("INPUT", term.lrepr())
+def recursive_reduction(term):
     while isinstance(term, Application):
-        term = term.beta()
+        if isinstance(term.m, Abstraction):
+            term = term.m.term.apply(term.m.var.id, term.n)
+            yield term
+        elif isinstance(term.m, Application):
+            for t in recursive_reduction(term.m):
+                term = Application(t, term.n)
+                yield term
+                break
+            else:
+                break
+        else:
+            break
+    if isinstance(term, Abstraction):
+        for t in recursive_reduction(term.term):
+            yield Abstraction(term.var, t, bind=False)
+
+
+def show_reduction(term, shorthands={}, ast=False):
+    print("INPUT", term.lrepr())
+    if ast:
+        term.tree()
+
+    for term in recursive_reduction(term):
         print("β ==>", term.lrepr())
+        if ast:
+            term.tree()
 
     print()
     found_one = False
     church = church_to_int(term)
     if church is not None:
         print("Potential shorthand representations:")
-        print("-> As church numeral {}".format(church))
+        print("-> As Church numeral {}".format(church))
         found_one = True
     for k, v in shorthands.items():
         if term.alpha_eq(v):
@@ -292,6 +321,14 @@ def show_reduction(term, shorthands={}):
 
 
 def repl():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--show-ast',
+        action='store_true',
+        default=False,
+        help='Show a big abstract syntax tree with stuff that gets printed')
+    args = parser.parse_args()
+
     shorthands = {}
 
     # preload default shorthands
@@ -344,8 +381,8 @@ def repl():
                     if not term.bound:
                         print("Input is not fully bound")
                         continue
-                    show_reduction(term, shorthands)
-            except Exception as e:
+                    show_reduction(term, shorthands, ast=args.show_ast)
+            except SyntaxError as e:
                 print("{}: {}".format(e.__class__.__name__, e))
 
 
