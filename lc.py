@@ -286,6 +286,13 @@ def recursive_reduction(term):
                 break
             else:
                 break
+        elif isinstance(term.n, Application):
+            for t in recursive_reduction(term.n):
+                term = Application(term.m, t)
+                yield term
+                break
+            else:
+                break
         else:
             break
     if isinstance(term, Abstraction):
