@@ -81,7 +81,7 @@ class Abstraction(Term):
     def alpha_eq(self, other, renames={}):
         if not isinstance(other, Abstraction):
             return False
-        lesser, greater = sorted(self.var.id, other.var.id)
+        lesser, greater = sorted([self.var.id, other.var.id])
         renames = renames.copy()
         renames[lesser] = greater
         return self.term.alpha_eq(other.term, renames)
@@ -145,10 +145,19 @@ class Application(Term):
         self.n.tree(indent + "      ")
 
 
+class Definition:
+    def __init__(self, name, term):
+        self.name = name
+        if not term.bound:
+            raise SyntaxError("Shorthands may only have fully bound terms")
+        self.term = term
+
+
 tokens_p = re.compile(r'''
     \s*(?:  (?P<control>\(|\)|λ|\.|=)
        |    (?P<shorthand>\{[^}]+\})
-       |    (?P<variable>[^{}λ.])
+       |    (?P<numeral>[0-9]+)
+       |    (?P<variable>[^0-9{}λ.])
        )\s*''', re.VERBOSE)
 
 
@@ -160,7 +169,9 @@ def tokenize(code):
         if m.group('control'):
             yield CtrlTok.stringmap[m.group('control')]()
         elif m.group('shorthand'):
-            yield Shorthand(m.group('shorthand')[1:-1])
+            yield Shorthand(m.group('shorthand')[1:-1].upper())
+        elif m.group('numeral'):
+            yield Shorthand(m.group('numeral'))
         else:
             yield Variable(m.group('variable'))
         last_end = m.end()
@@ -177,7 +188,8 @@ def match(stack, types):
     return True
 
 
-def parse(tokens):
+def parse(tokens, shorthands={}):
+    digits_p = re.compile(r'\d+')
     stack = []
     lookahead = next(tokens)
     while True:
@@ -195,6 +207,22 @@ def parse(tokens):
             # Reduce by Abstraction -> λ Variable . Term
             t, _, x, _ = (stack.pop() for _ in range(4))
             stack.append(Abstraction(x, t))
+        elif (match(stack, (Shorthand, CtrlTok.DefineShorthand, Term))
+              and lookahead is None):
+            # Reduce by Definition -> Shorthand = Term
+            t, _, s = (stack.pop() for _ in range(3))
+            if digits_p.match(s):
+                raise SyntaxError('Church numerals cannot be redefined')
+            stack.append(Definition(s, t))
+        elif (match(stack, (Shorthand, ))
+              and not isinstance(lookahead, CtrlTok.DefineShorthand)):
+            s = stack.pop()
+            if digits_p.match(s):
+                stack.append(church_numeral(int(s)))
+            elif s in shorthands.keys():
+                stack.append(shorthands[s])
+            else:
+                raise KeyError('undefined shorthand {!r}'.format(s))
         else:
             # Shift
             if lookahead is None:
@@ -204,19 +232,92 @@ def parse(tokens):
                 lookahead = next(tokens)
             except StopIteration:
                 lookahead = None
-    if len(stack) == 1:
+    if (len(stack) == 1
+        and (isinstance(stack[0], Term)
+             or isinstance(stack[0], Definition))):
         return stack.pop()
     raise SyntaxError("incomplete parse")
 
 
-def show_reduction(term):
+def church_numeral(n):
+    a = Variable('x')
+    for _ in range(n):
+        a = Application(Variable('f'), a)
+    return Abstraction(Variable('f'), Abstraction(Variable('x'), a))
+
+
+def church_to_int(t):
+    if not isinstance(t, Abstraction):
+        return
+    f = t.var
+    t = t.term
+    if not isinstance(t, Abstraction):
+        return
+    x = t.var
+    i = 0
+    t = t.term
+    while isinstance(t, Application):
+        if not isinstance(t.m, Variable):
+            return
+        if t.m.id != f.id:
+            return
+        i += 1
+        t = t.n
+    if not isinstance(t, Variable) or t.id != x.id:
+        return
+    return i
+
+
+def show_reduction(term, shorthands={}):
     print("INPUT", term.lrepr())
     while isinstance(term, Application):
         term = term.beta()
         print("β ==>", term.lrepr())
 
+    print()
+    found_one = False
+    church = church_to_int(term)
+    if church is not None:
+        print("Potential shorthand representations:")
+        print("-> As church numeral {}".format(church))
+        found_one = True
+    for k, v in shorthands.items():
+        if term.alpha_eq(v):
+            if not found_one:
+                print("Potential shorthand representations:")
+            print("-> As {}".format(k.lrepr()))
+            found_one = True
+    if not found_one:
+        print("No known shorthand representations.")
+
 
 def repl():
+    shorthands = {}
+
+    # preload default shorthands
+    defaults = [
+        "{succ}=λn.λf.λx.f(nfx)",
+        "{add}=λm.λn.(m{succ}n)",
+        "{mult}=λm.λn.(m({add}n)0)",
+        "{true}=λx.λy.x",
+        "{false}=λx.λy.y",
+        "{and}=λp.λq.pqp",
+        "{or}=λp.λq.ppq",
+        "{not}=λp.p{false}{true}",
+        "{if}=λp.λa.λb.pab",
+        "{cons}=λx.λy.λf.fxy",
+        "{car}=λc.c{true}",
+        "{cdr}=λc.c{false}",
+        "{nil}=λx.{true}",
+        "{pred}=λn.λf.λx.n(λg.λh.h(gf))(λu.x)(λu.u)",
+        "{sub}=λm.λn.n{pred}m",
+        "{zero?}=λn.n(λx.{false}){true}",
+        "{nil?}=λp.p(λx.λy.{false})",
+        "{lte?}=λm.λn.{zero?}({sub}mn)"]
+
+    for d in defaults:
+        defn = parse(tokenize(d), shorthands)
+        shorthands[defn.name] = defn.term
 
     def completer(text, state):
         readline.insert_text('λ')
@@ -236,11 +337,14 @@ def repl():
         else:
             try:
                 if iput.strip():
-                    term = parse(tokenize(iput))
+                    term = parse(tokenize(iput), shorthands)
+                    if isinstance(term, Definition):
+                        shorthands[term.name] = term.term
+                        continue
                     if not term.bound:
                         print("Input is not fully bound")
                         continue
-                    show_reduction(term)
+                    show_reduction(term, shorthands)
             except Exception as e:
                 print("{}: {}".format(e.__class__.__name__, e))
 
