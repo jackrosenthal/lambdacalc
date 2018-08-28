@@ -1,21 +1,25 @@
+"""
+Lambda Calculus Beta Recuction Tool
+===================================
+
+:Author: Jack Rosenthal (jack@rosenth.al)
+"""
+
 import re
 import readline
 import argparse
 
 
-class CtrlTok:
-    class DefineShorthand: pass
-    class LParen: pass
-    class RParen: pass
-    class Lambda: pass
-    class Dot: pass
+class ControlToken:
+    """
+    Base class for all control tokens.
+    """
+    def __repr__(self):
+        return self.__class__.__name__
 
-    stringmap = {
-        '(': LParen,
-        ')': RParen,
-        'λ': Lambda,
-        '.': Dot,
-        '=': DefineShorthand}
+
+T = {k: type(k, (ControlToken, ), dict(ControlToken.__dict__))
+     for k in ("(", ")", "λ", ".", "=")}
 
 
 class Shorthand(str):
@@ -135,7 +139,7 @@ class Application(Term):
 
     def tree(self, indent=''):
         print("Application")
-        print(indent , "|- m:", end=' ', sep='')
+        print(indent, "|- m:", end=' ', sep='')
         self.m.tree(indent + "|     ")
         print(indent, "`- n:", end=' ', sep='')
         self.n.tree(indent + "      ")
@@ -163,7 +167,7 @@ def tokenize(code):
         if m.start() != last_end:
             raise SyntaxError("malformed input")
         if m.group('control'):
-            yield CtrlTok.stringmap[m.group('control')]()
+            yield T[m.group('control')]()
         elif m.group('shorthand'):
             yield Shorthand(m.group('shorthand')[1:-1].upper())
         elif m.group('numeral'):
@@ -189,7 +193,7 @@ def parse(tokens, shorthands={}):
     stack = []
     lookahead = next(tokens)
     while True:
-        if match(stack, (CtrlTok.LParen, Term, CtrlTok.RParen)):
+        if match(stack, (T['('], Term, T[')'])):
             # Reduce by Term -> ( Term )
             _, t, _ = (stack.pop() for _ in range(3))
             stack.append(t)
@@ -197,13 +201,13 @@ def parse(tokens, shorthands={}):
             # Reduce by Application -> Term Term
             n, m = (stack.pop() for _ in range(2))
             stack.append(Application(m, n))
-        elif (match(stack, (CtrlTok.Lambda, Variable, CtrlTok.Dot, Term))
+        elif (match(stack, (T['λ'], Variable, T['.'], Term))
               and (lookahead is None
-                   or isinstance(lookahead, CtrlTok.RParen))):
+                   or isinstance(lookahead, T[')']))):
             # Reduce by Abstraction -> λ Variable . Term
             t, _, x, _ = (stack.pop() for _ in range(4))
             stack.append(Abstraction(x, t))
-        elif (match(stack, (Shorthand, CtrlTok.DefineShorthand, Term))
+        elif (match(stack, (Shorthand, T['='], Term))
               and lookahead is None):
             # Reduce by Definition -> Shorthand = Term
             t, _, s = (stack.pop() for _ in range(3))
@@ -211,7 +215,7 @@ def parse(tokens, shorthands={}):
                 raise SyntaxError('Church numerals cannot be redefined')
             stack.append(Definition(s, t))
         elif (match(stack, (Shorthand, ))
-              and not isinstance(lookahead, CtrlTok.DefineShorthand)):
+              and not isinstance(lookahead, T['='])):
             s = stack.pop()
             if digits_p.match(s):
                 stack.append(church_numeral(int(s)))
